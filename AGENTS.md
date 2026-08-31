@@ -140,6 +140,66 @@ Do not commit:
 
 
 
+\## Git Workflow
+
+
+
+FocusGuard follows the repository Git workflow documented in `GIT\_WORKFLOW.md`. Coding agents must follow that policy.
+
+
+
+Before implementation:
+
+
+
+\- inspect git status
+
+\- inspect current branch
+
+\- understand the requested phase
+
+\- ensure the branch is appropriate
+
+
+
+For Phase 1+ work:
+
+
+
+\- do not implement on main
+
+\- use the appropriate feature/fix/refactor/etc. branch
+
+\- keep changes scoped
+
+\- run relevant tests
+
+\- do not push unless explicitly instructed
+
+\- do not merge unless explicitly instructed
+
+\- do not delete branches unless explicitly instructed
+
+\- never force-push main
+
+\- never commit secrets
+
+\- never modify unrelated files
+
+
+
+When asked to commit, use Conventional Commits.
+
+
+
+When asked to create a PR, provide a clear summary, test results, validation, and known limitations.
+
+
+
+If the current branch conflicts with the requested workflow, STOP and report the conflict instead of silently switching branches.
+
+
+
 \## Quality
 
 
