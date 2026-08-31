@@ -1,0 +1,7 @@
+numpy==1.26.4
+opencv-python==4.10.0.84
+ultralytics==8.3.253
+mediapipe==0.10.35
+pygame==2.6.1
+PyYAML==6.0.3
+pytest==8.4.2
