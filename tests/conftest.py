@@ -21,6 +21,7 @@ VALID_CONFIG: dict[str, Any] = {
         "clear_duration_seconds": 0.60,
         "warning_cooldown_seconds": 10,
     },
+    "face": {"model": "models/face_landmarker.task"},
     "eyes": {
         "closed_threshold": 0.21,
         "open_threshold": 0.24,
