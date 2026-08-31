@@ -18,6 +18,7 @@ def test_loads_valid_config(valid_config_path: Path) -> None:
     assert config.yolo.model == "models/yolo11n.pt"
     assert config.yolo.device == "auto"
     assert config.phone.confirm_duration_seconds == pytest.approx(0.35)
+    assert config.face.model == "models/face_landmarker.task"
     assert config.eyes.closed_threshold == pytest.approx(0.21)
     assert config.eyes.open_threshold == pytest.approx(0.24)
     assert config.head.yaw_threshold_degrees == pytest.approx(20)
@@ -127,3 +128,4 @@ def test_repo_config_yaml_is_valid() -> None:
 
     assert config.camera.target_fps == 30
     assert config.yolo.confidence == pytest.approx(0.45)
+    assert config.face.model == "models/face_landmarker.task"
