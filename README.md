@@ -121,6 +121,50 @@ Phase 0 tests cover:
 - application entry-point behavior for valid and missing configuration
   (`tests/test_main.py`)
 
+## Development Workflow
+
+FocusGuard follows a lightweight GitHub Flow-based development workflow.
+
+### Branching
+
+All feature development happens on dedicated branches:
+
+- `feature/*` — new functionality
+- `fix/*` — bug fixes
+- `refactor/*` — code restructuring
+- `test/*` — test improvements
+- `docs/*` — documentation
+- `chore/*` — tooling, dependencies, and configuration
+- `hotfix/*` — urgent fixes
+
+The `main` branch contains only reviewed and merged work.
+
+### Pull Requests
+
+Every feature is developed on a dedicated branch and merged into `main`
+through a Pull Request after testing and review.
+
+### Commit Convention
+
+FocusGuard follows Conventional Commits.
+
+Example:
+
+```text
+feat(camera): implement camera manager
+```
+
+### Release Tags
+
+Major development milestones are tagged:
+
+- `v0.1.0` — Phase 0: Project Foundation
+- `v0.2.0` — Phase 1: Camera Manager
+- `v1.0.0` — FocusGuard V1 MVP
+
+Detailed repository rules and agent instructions are documented in
+[`GIT_WORKFLOW.md`](GIT_WORKFLOW.md).
+
 ## Project Structure
 
 ```text
