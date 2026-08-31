@@ -33,6 +33,7 @@ logs/*.json
 models/*.pt
 models/*.onnx
 models/*.engine
+models/*.task
 
 # Temporary files
 *.tmp

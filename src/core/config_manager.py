@@ -42,6 +42,11 @@ class PhoneConfig:
 
 
 @dataclass(frozen=True)
+class FaceConfig:
+    model: str
+
+
+@dataclass(frozen=True)
 class EyesConfig:
     closed_threshold: float
     open_threshold: float
@@ -93,6 +98,7 @@ class AppConfig:
     camera: CameraConfig
     yolo: YoloConfig
     phone: PhoneConfig
+    face: FaceConfig
     eyes: EyesConfig
     head: HeadConfig
     person: PersonConfig
@@ -133,6 +139,7 @@ class ConfigManager:
         camera = self._section(raw, "camera")
         yolo = self._section(raw, "yolo")
         phone = self._section(raw, "phone")
+        face = self._section(raw, "face")
         eyes = self._section(raw, "eyes")
         head = self._section(raw, "head")
         person = self._section(raw, "person")
@@ -165,6 +172,8 @@ class ConfigManager:
             clear_duration_seconds=self._float(phone, "phone", "clear_duration_seconds", minimum=0.0),
             warning_cooldown_seconds=self._float(phone, "phone", "warning_cooldown_seconds", minimum=0.0),
         )
+
+        face_cfg = FaceConfig(model=self._str(face, "face", "model"))
 
         closed_threshold = self._float(eyes, "eyes", "closed_threshold", minimum=0.0)
         open_threshold = self._float(eyes, "eyes", "open_threshold", minimum=0.0)
@@ -215,6 +224,7 @@ class ConfigManager:
             camera=camera_cfg,
             yolo=yolo_cfg,
             phone=phone_cfg,
+            face=face_cfg,
             eyes=eyes_cfg,
             head=head_cfg,
             person=person_cfg,
