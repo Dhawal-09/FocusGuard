@@ -436,3 +436,35 @@ def test_multiple_complete_cycles_do_not_leak_stale_state() -> None:
         cycle_start = ts(clearing_start, CLEAR, 1.0)  # gap before next cycle
 
     assert filt.state == PhoneFilterState.NOT_DETECTED
+
+
+# --- 28. elapsed_in_state_seconds (Phase 8: debug-mode timers) ------------------
+
+
+def test_elapsed_in_state_seconds_is_none_while_not_detected() -> None:
+    filt = PhoneTemporalFilter(make_config())
+
+    assert filt.elapsed_in_state_seconds(0.0) is None
+
+
+def test_elapsed_in_state_seconds_while_confirming() -> None:
+    filt = PhoneTemporalFilter(make_config())
+    filt.update(True, 0.0)
+
+    assert filt.elapsed_in_state_seconds(0.1) == pytest.approx(0.1)
+
+
+def test_elapsed_in_state_seconds_is_none_once_confirmed() -> None:
+    filt = PhoneTemporalFilter(make_config())
+    confirmed_ts = confirm(filt)
+
+    assert filt.elapsed_in_state_seconds(ts(confirmed_ts, 5.0)) is None
+
+
+def test_elapsed_in_state_seconds_while_clearing() -> None:
+    filt = PhoneTemporalFilter(make_config())
+    confirmed_ts = confirm(filt)
+    clearing_start = ts(confirmed_ts, 0.1)
+    filt.update(False, clearing_start)
+
+    assert filt.elapsed_in_state_seconds(ts(clearing_start, 0.2)) == pytest.approx(0.2)
