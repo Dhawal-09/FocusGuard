@@ -20,8 +20,18 @@ def make_config(
     confidence: float = 0.45,
     phone_confidence: float = 0.55,
     device: str = "cpu",
+    detection_interval_seconds: float = 0.0,
 ) -> YoloConfig:
-    return YoloConfig(model=model, confidence=confidence, phone_confidence=phone_confidence, device=device)
+    # detection_interval_seconds is unused by YOLODetector itself (it is
+    # consumed by FocusGuardApp, tested in tests/test_app.py) - present here
+    # only because YoloConfig requires it.
+    return YoloConfig(
+        model=model,
+        confidence=confidence,
+        phone_confidence=phone_confidence,
+        device=device,
+        detection_interval_seconds=detection_interval_seconds,
+    )
 
 
 class FakeBoxes:

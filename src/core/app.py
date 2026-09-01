@@ -29,6 +29,21 @@ Audio subsystem failure at startup is caught and logged; the app
 continues without sound - AudioManager's own play_*/music methods already
 no-op safely whenever it was never successfully initialized.
 
+Detection interval (PRD section 29): "do not require YOLO inference at
+every displayed frame... run detection at controlled intervals, reuse
+latest detection result... if necessary." A real-hardware benchmark
+during Phase 13 measured YOLO at ~58ms/frame on CPU-only hardware (face
+analysis ~17ms), yielding ~11fps - below the 20-30fps target - while the
+orchestration layer itself (filters/state/events/session) measured at
+>10,000 synthetic frames/sec, confirming YOLO inference as the actual
+bottleneck. yolo.detection_interval_seconds throttles real YOLO calls to
+at most once per that many seconds, reusing the last detection result
+in between; face analysis, temporal filters, state evaluation, event
+generation, and session recording all still run every frame regardless -
+the PRD's main-loop diagram only qualifies YOLO with "according to
+detection interval", and face analysis is cheap enough (and drowsiness
+timing sensitive enough) to need no throttling.
+
 Pause semantics: while paused (or before a session has ever started),
 camera capture and UI rendering continue (a live preview stays visible
 and the UI stays responsive), but the CV pipeline itself - detection,
@@ -62,6 +77,11 @@ from src.state.phone_temporal_filter import PhoneTemporalFilter
 from src.state.state_manager import FocusState, StateManager
 from src.ui.dashboard_view import DashboardView, DebugInfo, UIAction
 from src.ui.ui_manager import UIError, UIManager
+
+# Absorbs float64 subtraction noise at realistic time.monotonic() magnitudes,
+# the same tolerance and reasoning src/state/temporal_filter.py documents for
+# its own duration-boundary comparisons.
+_DETECTION_INTERVAL_EPSILON_SECONDS = 1e-9
 
 
 class FocusGuardApp:
@@ -104,6 +124,7 @@ class FocusGuardApp:
         self._last_snapshot: PerceptionSnapshot | None = None
         self._last_detections: list[Detection] = []
         self._last_face_result: FaceAnalysisResult | None = None
+        self._last_yolo_timestamp: float | None = None
 
     # --- Top-level run -----------------------------------------------------------
 
@@ -184,14 +205,31 @@ class FocusGuardApp:
 
     # --- Per-frame CV pipeline (PRD section 34) -----------------------------------
 
+    def _should_run_detection(self, timestamp: float) -> bool:
+        """PRD section 29 detection interval: True on the very first frame
+        (no prior detection to reuse), or once yolo.detection_interval_seconds
+        has elapsed since the last real YOLO call. detection_interval_seconds
+        of 0.0 means "every frame" - identical to the pre-Phase-13 behavior."""
+        if self._last_yolo_timestamp is None:
+            return True
+        elapsed = timestamp - self._last_yolo_timestamp
+        return elapsed >= self._config.yolo.detection_interval_seconds - _DETECTION_INTERVAL_EPSILON_SECONDS
+
     def _process_frame(self, frame: Frame) -> None:
-        try:
-            detections = self._yolo.detect(frame.image, frame.timestamp)
-        except DetectionError as exc:
-            print(f"YOLO inference error: {exc}")
-            event = self._event_manager.model_error(frame.timestamp, str(exc))
-            self._session_manager.record_event(event)
-            detections = []
+        if self._should_run_detection(frame.timestamp):
+            try:
+                detections = self._yolo.detect(frame.image, frame.timestamp)
+            except DetectionError as exc:
+                print(f"YOLO inference error: {exc}")
+                event = self._event_manager.model_error(frame.timestamp, str(exc))
+                self._session_manager.record_event(event)
+                detections = []
+            self._last_yolo_timestamp = frame.timestamp
+        else:
+            # Reuse the last detection result rather than running YOLO again -
+            # face analysis, filters, state evaluation, events, and session
+            # recording below still run every frame regardless.
+            detections = self._last_detections
 
         try:
             face_result = self._face.analyze(frame.image, frame.timestamp)
@@ -328,6 +366,7 @@ class FocusGuardApp:
         self._last_snapshot = None
         self._last_detections = []
         self._last_face_result = None
+        self._last_yolo_timestamp = None
         self._session_manager.record_event(self._event_manager.session_started(now))
         self._audio.start_music()
 
@@ -375,6 +414,7 @@ class FocusGuardApp:
         self._last_snapshot = None
         self._last_detections = []
         self._last_face_result = None
+        self._last_yolo_timestamp = None
 
     @staticmethod
     def _print_summary(summary: SessionSummary) -> None:

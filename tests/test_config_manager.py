@@ -17,6 +17,7 @@ def test_loads_valid_config(valid_config_path: Path) -> None:
     assert config.camera.width == 1280
     assert config.yolo.model == "models/yolo11n.pt"
     assert config.yolo.device == "auto"
+    assert config.yolo.detection_interval_seconds == pytest.approx(0.1)
     assert config.phone.confirm_duration_seconds == pytest.approx(0.35)
     assert config.face.model == "models/face_landmarker.task"
     assert config.eyes.closed_threshold == pytest.approx(0.21)
@@ -77,6 +78,7 @@ def test_invalid_yolo_device_raises_config_error(tmp_path: Path) -> None:
     [
         {"yolo": {"confidence": 1.5}},
         {"yolo": {"confidence": -0.1}},
+        {"yolo": {"detection_interval_seconds": -0.1}},
         {"phone": {"confirm_duration_seconds": -1.0}},
         {"audio": {"volume": 1.1}},
         {"score": {"starting_score": -5}},
@@ -88,6 +90,16 @@ def test_out_of_range_values_raise_config_error(tmp_path: Path, overrides: dict)
 
     with pytest.raises(ConfigError):
         ConfigManager(path).load()
+
+
+def test_detection_interval_seconds_zero_is_valid(tmp_path: Path) -> None:
+    """0.0 is a legitimate value meaning "every frame" (the pre-Phase-13
+    default behavior) - it must not be rejected as out-of-range."""
+    path = write_config(tmp_path / "config.yaml", {"yolo": {"detection_interval_seconds": 0.0}})
+
+    config = ConfigManager(path).load()
+
+    assert config.yolo.detection_interval_seconds == 0.0
 
 
 def test_eyes_open_threshold_must_exceed_closed_threshold(tmp_path: Path) -> None:
@@ -106,6 +118,7 @@ def test_eyes_open_threshold_must_exceed_closed_threshold(tmp_path: Path) -> Non
         {"camera": {"index": "zero"}},
         {"audio": {"enabled": "yes"}},
         {"yolo": {"model": ""}},
+        {"yolo": {"detection_interval_seconds": "fast"}},
     ],
 )
 def test_wrong_type_values_raise_config_error(tmp_path: Path, overrides: dict) -> None:
