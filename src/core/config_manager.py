@@ -32,6 +32,7 @@ class YoloConfig:
     confidence: float
     phone_confidence: float
     device: str
+    detection_interval_seconds: float
 
 
 @dataclass(frozen=True)
@@ -165,6 +166,9 @@ class ConfigManager:
             confidence=self._float(yolo, "yolo", "confidence", minimum=0.0, maximum=1.0),
             phone_confidence=self._float(yolo, "yolo", "phone_confidence", minimum=0.0, maximum=1.0),
             device=yolo_device,
+            detection_interval_seconds=self._float(
+                yolo, "yolo", "detection_interval_seconds", minimum=0.0
+            ),
         )
 
         phone_cfg = PhoneConfig(
