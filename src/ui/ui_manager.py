@@ -217,8 +217,14 @@ class UIManager:
         self._screen.blit(scaled, (panel_rect.x + offset_x, panel_rect.y + offset_y))
 
     def _render_dashboard(self, view: DashboardView) -> None:
+        # FocusState has no PAUSED value (it simply stops being
+        # re-evaluated while paused) - view.paused is what tells the UI to
+        # show "PAUSED" instead of the frozen, now-stale status label.
+        status_text = "PAUSED" if view.paused else format_status(view.status)
+        status_color = WARNING_COLOR if view.paused else ACCENT_COLOR
+
         rows: list[tuple[str, str, tuple[int, int, int]]] = [
-            ("STATUS", format_status(view.status), ACCENT_COLOR),
+            ("STATUS", status_text, status_color),
             ("PERSON", format_presence(view.person_present), TEXT_COLOR),
             ("PHONE", format_presence(view.phone_detected), WARNING_COLOR if view.phone_detected else TEXT_COLOR),
             ("EYES", format_eye_state(view.eyes_state), TEXT_COLOR),

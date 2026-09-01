@@ -85,6 +85,12 @@ class DashboardView:
     session_start_timestamp: float | None = None
     debug: bool = False
     debug_info: DebugInfo | None = None
+    paused: bool = False
+    """True while a session is active but paused (PRD section 23's
+    SPACE control). FocusState itself has no PAUSED value - the state
+    simply stops being re-evaluated while paused, so this is the only
+    signal that tells the UI to show "PAUSED" instead of the frozen,
+    now-stale status label (Phase 12 integration)."""
 
 
 def format_duration(total_seconds: float) -> str:
