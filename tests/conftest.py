@@ -15,6 +15,7 @@ VALID_CONFIG: dict[str, Any] = {
         "confidence": 0.45,
         "phone_confidence": 0.55,
         "device": "auto",
+        "detection_interval_seconds": 0.1,
     },
     "phone": {
         "confirm_duration_seconds": 0.35,

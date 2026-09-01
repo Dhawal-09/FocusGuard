@@ -180,7 +180,7 @@ class FakeYoloModel:
 
 
 def make_yolo(model: FakeYoloModel, config: YoloConfig | None = None) -> YOLODetector:
-    cfg = config or YoloConfig(model="models/yolo11n.pt", confidence=0.45, phone_confidence=0.55, device="cpu")
+    cfg = config or YoloConfig(model="models/yolo11n.pt", confidence=0.45, phone_confidence=0.55, device="cpu", detection_interval_seconds=0.0)
     return YOLODetector(cfg, model_factory=lambda path: model)
 
 
@@ -316,9 +316,13 @@ def sounds_of(audio: AudioManager) -> dict[str, FakeSound]:
 
 
 def make_app_config(**overrides) -> AppConfig:
+    # detection_interval_seconds=0.0 by default: every _process_frame() call
+    # re-runs (fake) YOLO detection, matching every existing test's
+    # assumption. Dedicated interval-throttling tests override this field
+    # explicitly (see the "Detection interval throttling" section below).
     defaults = dict(
         camera=CameraConfig(index=0, width=IMAGE_WIDTH, height=IMAGE_HEIGHT, target_fps=30),
-        yolo=YoloConfig(model="models/yolo11n.pt", confidence=0.45, phone_confidence=0.55, device="cpu"),
+        yolo=YoloConfig(model="models/yolo11n.pt", confidence=0.45, phone_confidence=0.55, device="cpu", detection_interval_seconds=0.0),
         phone=PhoneConfig(confirm_duration_seconds=0.1, clear_duration_seconds=0.1, warning_cooldown_seconds=1.0),
         face=FaceConfig(model="models/face_landmarker.task"),
         eyes=EyesConfig(closed_threshold=0.21, open_threshold=0.24, blink_max_duration_seconds=0.05, drowsiness_duration_seconds=0.1),
@@ -636,6 +640,144 @@ def test_focus_restored_event_and_audio_on_return_to_focused(tmp_path: Path) -> 
     assert app._state_manager.state == FocusState.FOCUSED
     assert any(e.event_type == EventType.FOCUS_RESTORED for e in app._event_manager.events)
     assert sounds_of(fakes["audio"])["focus_restored"].played_count == 1
+
+
+# =========================================================================================
+# Detection interval throttling (PRD section 29, Phase 13)
+# =========================================================================================
+
+
+def _yolo_config_with_interval(interval_seconds: float) -> YoloConfig:
+    return YoloConfig(
+        model="models/yolo11n.pt",
+        confidence=0.45,
+        phone_confidence=0.55,
+        device="cpu",
+        detection_interval_seconds=interval_seconds,
+    )
+
+
+def test_yolo_not_called_again_within_the_interval_window(tmp_path: Path) -> None:
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    cfg = make_app_config(yolo=_yolo_config_with_interval(0.1))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model)
+    app._start_session(0.0)
+
+    app._process_frame(make_frame(0.0))
+    assert yolo_model.calls == 1
+
+    app._process_frame(make_frame(ts(0.05)))  # well within the 0.1s window
+
+    assert yolo_model.calls == 1  # not called again
+
+
+def test_yolo_reuses_last_detections_within_the_interval_window(tmp_path: Path) -> None:
+    """The reused (stale) detections must still flow through the full
+    pipeline (snapshot/filters/state) on the skipped frame - only the real
+    YOLO call itself is skipped."""
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    cfg = make_app_config(yolo=_yolo_config_with_interval(0.1))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model)
+    app._start_session(0.0)
+    app._process_frame(make_frame(0.0))
+
+    yolo_model.entries = [PERSON_BOX, PHONE_BOX]  # would matter if re-detected, but interval blocks it
+    app._process_frame(make_frame(ts(0.05)))
+
+    assert yolo_model.calls == 1
+    assert app._last_snapshot.person_present is True  # reused detection still flowed through
+    assert app._last_snapshot.phone_detected is False  # the stale (pre-phone) result, not the new entries
+
+
+def test_yolo_called_again_once_interval_elapses(tmp_path: Path) -> None:
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    cfg = make_app_config(yolo=_yolo_config_with_interval(0.1))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model)
+    app._start_session(0.0)
+    app._process_frame(make_frame(0.0))
+    assert yolo_model.calls == 1
+
+    app._process_frame(make_frame(ts(0.1)))  # exactly at the boundary
+
+    assert yolo_model.calls == 2
+
+
+def test_yolo_called_again_well_past_interval(tmp_path: Path) -> None:
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    cfg = make_app_config(yolo=_yolo_config_with_interval(0.1))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model)
+    app._start_session(0.0)
+    app._process_frame(make_frame(0.0))
+
+    app._process_frame(make_frame(ts(0.5)))
+
+    assert yolo_model.calls == 2
+
+
+def test_zero_interval_calls_yolo_every_frame(tmp_path: Path) -> None:
+    """detection_interval_seconds=0.0 must behave identically to the
+    pre-Phase-13 (every-frame) behavior - this is also make_app_config()'s
+    default, so every other test in this file relies on it implicitly."""
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    cfg = make_app_config(yolo=_yolo_config_with_interval(0.0))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model)
+    app._start_session(0.0)
+
+    for i in range(5):
+        app._process_frame(make_frame(ts(0.0, i * 0.01)))
+
+    assert yolo_model.calls == 5
+
+
+def test_face_analysis_still_runs_every_frame_regardless_of_yolo_interval(tmp_path: Path) -> None:
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    landmarker = FakeFaceLandmarker(face_landmarks=[make_landmarks(OPEN_POINTS, OPEN_POINTS)])
+    cfg = make_app_config(yolo=_yolo_config_with_interval(0.1))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model, landmarker=landmarker)
+    app._start_session(0.0)
+    app._process_frame(make_frame(0.0))
+    assert landmarker.calls == 1
+
+    app._process_frame(make_frame(ts(0.01)))  # well within the YOLO interval window
+
+    assert landmarker.calls == 2  # face analysis is never throttled
+    assert yolo_model.calls == 1  # YOLO was correctly skipped
+
+
+def test_state_and_session_still_update_every_frame_while_yolo_is_throttled(tmp_path: Path) -> None:
+    """Drowsiness confirmation (driven purely by eye state, independent of
+    YOLO) must still work correctly while YOLO calls are being throttled -
+    proving the filters/state/session pipeline is untouched by the interval."""
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    landmarker = FakeFaceLandmarker(face_landmarks=[make_landmarks(CLOSED_POINTS, CLOSED_POINTS)])
+    cfg = make_app_config(yolo=_yolo_config_with_interval(10.0))  # huge interval: YOLO only ever called once
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model, landmarker=landmarker)
+    app._start_session(0.0)
+
+    app._process_frame(make_frame(0.0))
+    app._process_frame(make_frame(ts(0.1)))  # crosses drowsiness_duration_seconds=0.1
+
+    assert yolo_model.calls == 1  # YOLO never called a second time
+    assert app._state_manager.state == FocusState.DROWSINESS_SIGNAL
+    assert app._session_manager.drowsiness_count == 1
+
+
+def test_detection_interval_state_resets_on_new_session(tmp_path: Path) -> None:
+    """A brand new session must not inherit the previous session's YOLO
+    timing/detection state - its very first frame must run a real
+    detection regardless of how recently the prior session called YOLO."""
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    cfg = make_app_config(yolo=_yolo_config_with_interval(10.0))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model)
+    app._start_session(0.0)
+    app._process_frame(make_frame(0.0))
+    assert yolo_model.calls == 1
+
+    app._handle_reset(1.0)  # idle/paused-safe reset per PRD section 23
+    app._start_session(2.0)
+    app._process_frame(make_frame(2.0))
+
+    assert yolo_model.calls == 2
 
 
 # =========================================================================================
