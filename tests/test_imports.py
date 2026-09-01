@@ -21,6 +21,7 @@ MODULES = [
     "src.audio.audio_manager",
     "src.session.session_manager",
     "src.ui.ui_manager",
+    "src.core.app",
 ]
 
 

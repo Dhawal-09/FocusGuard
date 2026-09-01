@@ -278,6 +278,7 @@ def test_dashboard_view_defaults() -> None:
 
     assert view.recent_events == ()
     assert view.session_start_timestamp is None
+    assert view.paused is False
     assert view.debug is False
     assert view.debug_info is None
 
@@ -289,6 +290,23 @@ def test_debug_info_defaults() -> None:
     assert debug_info.landmarks is None
     assert debug_info.eye_metric is None
     assert debug_info.phone_timer_seconds is None
+
+
+def test_dashboard_view_paused_can_be_set_true() -> None:
+    view = DashboardView(
+        status=FocusState.FOCUSED,
+        person_present=True,
+        phone_detected=False,
+        eyes_state=EyeState.OPEN,
+        head_orientation=HeadOrientation.CENTER,
+        session_elapsed_seconds=10.0,
+        focus_score=100,
+        fps=30.0,
+        inference_latency_ms=10.0,
+        paused=True,
+    )
+
+    assert view.paused is True
 
 
 # --- UIAction ---------------------------------------------------------------------------
