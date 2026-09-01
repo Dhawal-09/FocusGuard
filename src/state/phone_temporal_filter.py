@@ -58,6 +58,16 @@ class PhoneTemporalFilter:
     def state(self) -> PhoneFilterState:
         return self._state
 
+    def elapsed_in_state_seconds(self, now: float) -> float | None:
+        """Seconds elapsed since entering CONFIRMING or CLEARING, for
+        debug-mode timer display (PRD section 24). None during
+        NOT_DETECTED/CONFIRMED - no transitional timer running in those
+        states. Purely additive, read-only access to bookkeeping update()
+        already maintains; it changes no existing behavior."""
+        if self._state_start_timestamp is None:
+            return None
+        return now - self._state_start_timestamp
+
     def update(self, phone_detected: bool, timestamp: float) -> PhoneFilterResult:
         self._validate_timestamp(timestamp)
 

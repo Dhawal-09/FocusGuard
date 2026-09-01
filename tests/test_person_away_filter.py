@@ -155,3 +155,28 @@ def test_zero_away_duration_confirms_immediately() -> None:
 
     assert result.is_away is True
     assert result.just_confirmed is True
+
+
+# --- elapsed_in_state_seconds (Phase 8: debug-mode timers) -----------------------
+
+
+def test_elapsed_in_state_seconds_is_none_while_person_present() -> None:
+    filt = PersonAwayFilter(make_config())
+    filt.update(True, 0.0)
+
+    assert filt.elapsed_in_state_seconds(0.0) is None
+
+
+def test_elapsed_in_state_seconds_while_confirming_away() -> None:
+    filt = PersonAwayFilter(make_config())
+    filt.update(False, 0.0)
+
+    assert filt.elapsed_in_state_seconds(1.5) == pytest.approx(1.5)
+
+
+def test_elapsed_in_state_seconds_is_none_once_confirmed_away() -> None:
+    filt = PersonAwayFilter(make_config())
+    filt.update(False, 0.0)
+    filt.update(False, AWAY)
+
+    assert filt.elapsed_in_state_seconds(AWAY + 5.0) is None

@@ -369,3 +369,26 @@ def test_is_diverted_matches_logical_state(state: HeadOrientationFilterState, ex
 
     assert result.state == state
     assert result.is_diverted is expected_is_diverted
+
+
+# --- 22. elapsed_in_state_seconds (Phase 8: debug-mode timers) --------------------
+
+
+def test_elapsed_in_state_seconds_is_none_while_centered() -> None:
+    filt = HeadOrientationFilter(make_config())
+
+    assert filt.elapsed_in_state_seconds(0.0) is None
+
+
+def test_elapsed_in_state_seconds_while_diverting() -> None:
+    filt = HeadOrientationFilter(make_config())
+    filt.update(HeadOrientation.LEFT, 0.0)
+
+    assert filt.elapsed_in_state_seconds(0.1) == pytest.approx(0.1)
+
+
+def test_elapsed_in_state_seconds_is_none_once_diverted() -> None:
+    filt = HeadOrientationFilter(make_config())
+    confirmed_ts = divert(filt)
+
+    assert filt.elapsed_in_state_seconds(ts(confirmed_ts, 5.0)) is None

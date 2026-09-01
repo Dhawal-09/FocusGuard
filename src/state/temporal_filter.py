@@ -98,6 +98,17 @@ class DurationConfirmer:
     def state(self) -> DurationConfirmerState:
         return self._state
 
+    def elapsed_in_state_seconds(self, now: float) -> float | None:
+        """Seconds elapsed since entering the current transitional state
+        (CONFIRMING or CLEARING), for debug-mode timer display (PRD
+        section 24). None while INACTIVE or CONFIRMED - there is no
+        transitional timer running in those states. Purely additive,
+        read-only access to bookkeeping update() already maintains; it
+        changes no existing behavior."""
+        if self._state_start_timestamp is None:
+            return None
+        return now - self._state_start_timestamp
+
     def update(self, active: bool, timestamp: float) -> DurationConfirmerResult:
         _validate_monotonic(self._last_timestamp, timestamp)
 

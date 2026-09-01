@@ -46,6 +46,13 @@ class PersonAwayFilter:
     def state(self) -> DurationConfirmerState:
         return self._confirmer.state
 
+    def elapsed_in_state_seconds(self, now: float) -> float | None:
+        """Seconds elapsed since absence started confirming toward AWAY,
+        for debug-mode away-timer display (PRD section 24). None while not
+        currently mid-confirmation. Delegates directly to the wrapped
+        DurationConfirmer - purely additive."""
+        return self._confirmer.elapsed_in_state_seconds(now)
+
     def update(self, person_present: bool, timestamp: float) -> PersonAwayFilterResult:
         active = not person_present
         result = self._confirmer.update(active, timestamp)
