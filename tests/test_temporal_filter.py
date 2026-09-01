@@ -539,3 +539,54 @@ def test_cooldown_never_fired_before_first_call_reports_none() -> None:
     cd = Cooldown(COOLDOWN)
 
     assert cd.last_fired_timestamp is None
+
+
+# =============================================================================
+# DurationConfirmer.elapsed_in_state_seconds (Phase 8: debug-mode timers)
+# =============================================================================
+
+
+def test_elapsed_in_state_seconds_is_none_while_inactive() -> None:
+    dc = DurationConfirmer(confirm_duration_seconds=CONFIRM)
+
+    assert dc.elapsed_in_state_seconds(0.0) is None
+
+
+def test_elapsed_in_state_seconds_while_confirming() -> None:
+    dc = DurationConfirmer(confirm_duration_seconds=CONFIRM)
+    dc.update(True, 0.0)
+
+    assert dc.elapsed_in_state_seconds(0.1) == pytest.approx(0.1)
+
+
+def test_elapsed_in_state_seconds_is_none_once_confirmed() -> None:
+    dc = DurationConfirmer(confirm_duration_seconds=CONFIRM)
+    dc.update(True, 0.0)
+    dc.update(True, CONFIRM)
+
+    assert dc.state == DurationConfirmerState.CONFIRMED
+    assert dc.elapsed_in_state_seconds(CONFIRM + 5.0) is None
+
+
+def test_elapsed_in_state_seconds_while_clearing() -> None:
+    dc = DurationConfirmer(confirm_duration_seconds=CONFIRM, clear_duration_seconds=CLEAR)
+    dc.update(True, 0.0)
+    dc.update(True, CONFIRM)
+    dc.update(False, ts(CONFIRM, 0.1))
+
+    assert dc.state == DurationConfirmerState.CLEARING
+    assert dc.elapsed_in_state_seconds(ts(CONFIRM, 0.1, 0.2)) == pytest.approx(0.2)
+
+
+def test_elapsed_in_state_seconds_does_not_affect_update_behavior() -> None:
+    """Purely additive: calling the accessor must not perturb the
+    confirm/clear state machine itself."""
+    dc = DurationConfirmer(confirm_duration_seconds=CONFIRM)
+    dc.update(True, 0.0)
+
+    dc.elapsed_in_state_seconds(0.1)
+    dc.elapsed_in_state_seconds(0.2)
+    result = dc.update(True, CONFIRM)
+
+    assert result.state == DurationConfirmerState.CONFIRMED
+    assert result.just_confirmed is True

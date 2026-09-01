@@ -57,6 +57,13 @@ class DrowsinessFilter:
     def state(self) -> DurationConfirmerState:
         return self._confirmer.state
 
+    def elapsed_in_state_seconds(self, now: float) -> float | None:
+        """Seconds elapsed since eye closure started confirming toward
+        drowsiness, for debug-mode timer display (PRD section 24). None
+        while eyes are not currently mid-confirmation. Delegates directly
+        to the wrapped DurationConfirmer - purely additive."""
+        return self._confirmer.elapsed_in_state_seconds(now)
+
     def update(self, eyes_state: EyeState, timestamp: float) -> DrowsinessFilterResult:
         active = eyes_state == EyeState.CLOSED
         result = self._confirmer.update(active, timestamp)

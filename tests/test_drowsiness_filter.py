@@ -192,3 +192,28 @@ def test_zero_drowsiness_duration_confirms_immediately() -> None:
 
     assert result.is_drowsy is True
     assert result.just_confirmed is True
+
+
+# --- elapsed_in_state_seconds (Phase 8: debug-mode timers) -----------------------
+
+
+def test_elapsed_in_state_seconds_is_none_while_eyes_open() -> None:
+    filt = DrowsinessFilter(make_config())
+    filt.update(EyeState.OPEN, 0.0)
+
+    assert filt.elapsed_in_state_seconds(0.0) is None
+
+
+def test_elapsed_in_state_seconds_while_closing() -> None:
+    filt = DrowsinessFilter(make_config())
+    filt.update(EyeState.CLOSED, 0.0)
+
+    assert filt.elapsed_in_state_seconds(0.3) == pytest.approx(0.3)
+
+
+def test_elapsed_in_state_seconds_is_none_once_confirmed_drowsy() -> None:
+    filt = DrowsinessFilter(make_config())
+    filt.update(EyeState.CLOSED, 0.0)
+    filt.update(EyeState.CLOSED, DROWSY)
+
+    assert filt.elapsed_in_state_seconds(DROWSY + 5.0) is None

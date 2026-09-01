@@ -76,6 +76,16 @@ class HeadOrientationFilter:
     def state(self) -> HeadOrientationFilterState:
         return self._state
 
+    def elapsed_in_state_seconds(self, now: float) -> float | None:
+        """Seconds elapsed since entering DIVERTING, for debug-mode timer
+        display (PRD section 24). None while CENTERED or DIVERTED - no
+        confirmation timer running in those states. Purely additive,
+        read-only access to bookkeeping update() already maintains; it
+        changes no existing behavior."""
+        if self._diverting_start_timestamp is None:
+            return None
+        return now - self._diverting_start_timestamp
+
     def update(self, orientation: HeadOrientation, timestamp: float) -> HeadOrientationFilterResult:
         self._validate_timestamp(timestamp)
 
