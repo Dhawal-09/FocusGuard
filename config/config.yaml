@@ -1,53 +1,66 @@
+# FocusGuard configuration (FOCUSGUARD_PRD.md section 30).
+# All values below are the PRD's suggested defaults - tune them for your own
+# camera, lighting, and preferences. Comments only; no values were changed.
+
 camera:
-  index: 0
+  index: 0            # OS camera device index (0 = default/first webcam)
   width: 1280
   height: 720
   target_fps: 30
 
 yolo:
   model: models/yolo11n.pt
-  confidence: 0.45
-  phone_confidence: 0.55
-  device: auto
-  detection_interval_seconds: 0.1
+  confidence: 0.45              # minimum confidence to accept a "person" detection
+  phone_confidence: 0.55        # minimum confidence to accept a "cell phone" detection
+  device: auto                  # auto | cpu | cuda (falls back to cpu if cuda unavailable)
+  detection_interval_seconds: 0.1   # min. time between real YOLO calls; frames in
+                                     # between reuse the last detection result (PRD
+                                     # section 29 - keeps FPS near the 20-30 target)
 
 phone:
-  confirm_duration_seconds: 0.35
-  clear_duration_seconds: 0.60
-  warning_cooldown_seconds: 10
+  confirm_duration_seconds: 0.35   # phone must be seen continuously this long before
+                                    # PHONE_DISTRACTION is confirmed (ignores single-frame noise)
+  clear_duration_seconds: 0.60     # phone must be gone continuously this long before
+                                    # the distraction clears
+  warning_cooldown_seconds: 10     # minimum gap between repeated phone-warning audio/events
 
 face:
-  model: models/face_landmarker.task
+  model: models/face_landmarker.task   # MediaPipe Face Landmarker model file (see README)
 
 eyes:
-  closed_threshold: 0.21
-  open_threshold: 0.24
-  blink_max_duration_seconds: 0.45
-  drowsiness_duration_seconds: 1.20
+  closed_threshold: 0.21           # eye-openness metric (EAR) below this = CLOSED
+  open_threshold: 0.24             # EAR above this = OPEN; values between the two
+                                    # thresholds keep the previous state (hysteresis,
+                                    # avoids flicker right at the boundary)
+  blink_max_duration_seconds: 0.45 # closures shorter than this are a normal blink
+  drowsiness_duration_seconds: 1.20 # eyes must stay CLOSED at least this long before
+                                     # DROWSINESS_SIGNAL fires
 
 head:
-  yaw_threshold_degrees: 20
-  pitch_threshold_degrees: 18
-  confirmation_seconds: 0.80
+  yaw_threshold_degrees: 20        # left/right head rotation beyond this = off-center
+  pitch_threshold_degrees: 18      # up/down head tilt beyond this = off-center
+  confirmation_seconds: 0.80       # head must stay off-center this long before
+                                    # ATTENTION_DIVERTED is confirmed
 
 person:
-  away_duration_seconds: 3.0
+  away_duration_seconds: 3.0       # person must be undetected this long before AWAY fires
 
 audio:
-  enabled: true
-  volume: 0.70
-  music_enabled: false
-  music_volume: 0.25
+  enabled: true          # master on/off switch for all warnings and music
+  volume: 0.70            # warning-sound volume, 0.0-1.0
+  music_enabled: false    # background focus music (requires assets/music/focus_music.mp3)
+  music_volume: 0.25      # background music volume, 0.0-1.0
 
 ui:
-  debug: false
+  debug: false   # start with the debug overlay on (toggle anytime with the D key)
 
 score:
-  starting_score: 100
-  phone_event_penalty: 10
-  drowsiness_event_penalty: 5
-  attention_event_penalty: 3
-  away_event_penalty: 5
+  starting_score: 100          # estimated focus score at session start (demonstration metric)
+  phone_event_penalty: 10      # deducted per confirmed phone distraction
+  drowsiness_event_penalty: 5  # deducted per confirmed drowsiness signal
+  attention_event_penalty: 3   # deducted per confirmed attention diversion
+  away_event_penalty: 5        # deducted per confirmed away event
+                                # (score never goes below 0)
 
 session:
-  max_event_log_entries: 100
+  max_event_log_entries: 100   # how many recent events the in-memory/on-screen log keeps
