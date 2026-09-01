@@ -209,6 +209,15 @@ def test_render_full_cycle_of_focus_states_does_not_raise(manager: UIManager) ->
         manager.render(make_view(status=state), frame=make_frame())
 
 
+def test_render_paused_does_not_raise(manager: UIManager) -> None:
+    manager.render(make_view(paused=True), frame=make_frame())
+
+
+def test_render_paused_with_debug_does_not_raise(manager: UIManager) -> None:
+    view = make_view(paused=True, debug=True, debug_info=DebugInfo())
+    manager.render(view, frame=make_frame())
+
+
 def test_render_multiple_consecutive_frames_does_not_raise(manager: UIManager) -> None:
     for i in range(5):
         manager.render(make_view(session_elapsed_seconds=float(i)), frame=make_frame())

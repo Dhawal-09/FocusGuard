@@ -17,32 +17,40 @@ Repository engineering rules: [`AGENTS.md`](AGENTS.md).
 
 ## Current Implementation Status
 
-**Phase 0 — Project Foundation only.**
+**Fully integrated — `python main.py` runs the real, end-to-end application.**
 
-This repository currently contains the project skeleton, dependency setup,
-configuration loading/validation, and initial tests. It does **not** yet contain
-any computer-vision functionality. Specifically, none of the following are
-implemented yet:
+Every subsystem the PRD describes is implemented and wired together by
+`src/core/app.py`, following the main-loop order in `FOCUSGUARD_PRD.md`
+section 34:
 
-- webcam capture
-- YOLO person/phone detection
-- face/eye/head-pose analysis
-- temporal filtering
-- the focus state machine
-- event processing
-- audio alerts
-- the Pygame dashboard UI
-- session analytics / focus score
+- webcam capture (`CameraManager`)
+- YOLO person/phone detection (`YOLODetector`)
+- face/eye/head-pose analysis (`FaceAnalyzer`, `head_pose.py`)
+- primary-person selection and per-frame perception snapshots
+- temporal filtering (phone, drowsiness, attention, person-away)
+- the focus state machine (`StateManager`)
+- event generation and a bounded event log (`EventManager`)
+- audio warnings and background focus music (`AudioManager`)
+- the Pygame dashboard UI, including a debug overlay (`UIManager`)
+- session analytics, focus score, and JSON summary persistence (`SessionManager`)
+- startup/per-frame error handling per section 35 (readable, non-silent failures;
+  a single bad detection/face-analysis frame degrades gracefully rather than
+  crashing the session)
 
-These are implemented incrementally in later phases (see `FOCUSGUARD_PRD.md`,
-section 39, "Development Phases"). Running `python main.py` today only loads and
-validates `config/config.yaml` and prints a status message.
+Controls: `SPACE` start/pause/resume, `Q`/`ESC` exit (ends and saves the
+current session first, if one is active), `M` toggle mute, `D` toggle debug
+overlay, `R` reset (only while paused or idle, never mid-session).
+
+Development proceeded phase-by-phase per `FOCUSGUARD_PRD.md` section 39 and
+is documented commit-by-commit and PR-by-PR in this repository's history.
 
 ## Prerequisites
 
 - Windows (primary target for this MVP; CPU inference must work without a GPU)
 - Python 3.11 (see "Why Python 3.11" below)
-- A webcam (needed starting Phase 2, not required for Phase 0)
+- A webcam
+- A MediaPipe Face Landmarker model file at `models/face_landmarker.task` (not
+  auto-downloaded; download it from MediaPipe's model index and place it there)
 
 ## Why Python 3.11 and These Dependency Versions
 
@@ -69,8 +77,10 @@ backend, and MediaPipe transitively installs `opencv-contrib-python`; these are
 not listed directly in `requirements.txt` since they are not imported by
 FocusGuard's own code.
 
-No ML model weights are downloaded in Phase 0; `models/yolo11n.pt` is fetched by
-Ultralytics automatically the first time detection actually runs (Phase 3+).
+`models/yolo11n.pt` is fetched automatically by Ultralytics the first time
+detection runs. The MediaPipe Face Landmarker model (`models/face_landmarker.task`)
+is **not** auto-downloaded and must be placed there manually before running the
+application (see Prerequisites above).
 
 ## Virtual Environment Setup
 
@@ -104,8 +114,12 @@ pip install -r requirements.txt
 python main.py
 ```
 
-In Phase 0 this only loads and validates `config/config.yaml` and prints a
-confirmation message — it does not open the camera or any UI window yet.
+This loads and validates `config/config.yaml`, opens the webcam, loads the YOLO
+and face-landmark models, opens the dashboard window, and runs the full
+real-time monitoring loop. Press `SPACE` to start a session. A failure to open
+the camera, load a model, or initialize Pygame is reported with a readable
+message and a non-zero exit code; a failed audio device is reported but does
+not stop the app (it just runs without sound).
 
 ## Running Tests
 
@@ -113,13 +127,13 @@ confirmation message — it does not open the camera or any UI window yet.
 pytest -q
 ```
 
-Phase 0 tests cover:
-
-- configuration loading (`tests/test_config_manager.py`)
-- configuration validation, including invalid/out-of-range/malformed values
-- basic import health of every module in `src/` (`tests/test_imports.py`)
-- application entry-point behavior for valid and missing configuration
-  (`tests/test_main.py`)
+The suite is fully deterministic and requires no webcam, GPU, real model
+weights, real audio device, or real display — every hardware-facing module
+(`CameraManager`, `YOLODetector`, `FaceAnalyzer`, `UIManager`, `AudioManager`)
+is unit-tested against injected fake backends, and `src/core/app.py`'s
+integration/orchestration logic (`tests/test_app.py`) is tested the same way,
+composing real manager instances wired to those same fakes rather than a
+separately-mocked orchestrator.
 
 ## Development Workflow
 
@@ -169,30 +183,34 @@ Detailed repository rules and agent instructions are documented in
 
 ```text
 focusguard/
-├── main.py
+├── main.py             # thin entry point: load config, run FocusGuardApp
 ├── config/
 │   └── config.yaml
-├── models/            # YOLO weights land here (Phase 3+); not tracked by Git
+├── models/             # YOLO weights (auto-downloaded) + face_landmarker.task
+│                       # (user-provided); not tracked by Git
 ├── assets/
-│   ├── sounds/        # user-provided audio warnings (Phase 10+)
-│   └── music/         # user-provided background focus music (Phase 10+)
-├── logs/              # session JSON summaries (Phase 11+); not tracked by Git
+│   ├── sounds/         # user-provided audio warnings
+│   └── music/          # user-provided background focus music
+├── logs/               # session JSON summaries; not tracked by Git
 ├── src/
-│   ├── core/          # config_manager.py, types.py
-│   ├── camera/        # camera_manager.py (Phase 2)
-│   ├── detection/      # yolo_detector.py, detection_types.py (Phase 3)
-│   ├── face/           # face_analyzer.py, eye_metrics.py, head_pose.py (Phase 5-6)
-│   ├── state/          # temporal_filter.py, state_manager.py (Phase 7-8)
-│   ├── events/         # event_manager.py (Phase 8)
-│   ├── audio/          # audio_manager.py (Phase 10)
-│   ├── session/        # session_manager.py (Phase 11)
-│   └── ui/             # ui_manager.py (Phase 9)
+│   ├── core/           # config_manager.py, types.py, app.py (FocusGuardApp - the
+│   │                   # full integration/orchestration layer)
+│   ├── camera/         # camera_manager.py
+│   ├── detection/      # yolo_detector.py, detection_types.py, primary_person.py
+│   ├── face/           # face_analyzer.py, eye_metrics.py, head_pose.py
+│   ├── state/          # temporal_filter.py, state_manager.py, phone/head/
+│   │                   # drowsiness/person-away temporal filters
+│   ├── events/         # event_manager.py
+│   ├── audio/          # audio_manager.py
+│   ├── session/        # session_manager.py
+│   └── ui/             # ui_manager.py, dashboard_view.py
 └── tests/
 ```
 
-## Phase 0 Scope Statement
+## Scope Statement
 
-**Phase 0 is project foundation only**: environment, dependency management,
-project/config structure, and initial tests. It intentionally implements no
-computer-vision, UI, audio, or session logic. Subsequent phases are implemented
-one at a time per `FOCUSGUARD_PRD.md`, section 39.
+FocusGuard V1 is implemented as specified in `FOCUSGUARD_PRD.md`: a local,
+real-time, portfolio-grade computer-vision desktop application, built
+incrementally phase-by-phase per section 39. Out of scope by design (PRD
+section 43): a custom-trained detection model, personalized calibration,
+browser integration, and application packaging/distribution.
