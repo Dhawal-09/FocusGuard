@@ -50,6 +50,11 @@ audio:
   volume: 0.70            # warning-sound volume, 0.0-1.0
   music_enabled: false    # background focus music (requires assets/music/focus_music.mp3)
   music_volume: 0.25      # background music volume, 0.0-1.0
+  persistent_warning_interval_seconds: 10.0   # while phone/drowsiness/attention
+                                               # distraction continues without clearing,
+                                               # repeat the warning at this interval
+                                               # (the initial warning on confirmation is
+                                               # separate and always immediate)
 
 ui:
   debug: false   # start with the debug overlay on (toggle anytime with the D key)
