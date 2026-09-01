@@ -40,6 +40,7 @@ VALID_CONFIG: dict[str, Any] = {
         "volume": 0.70,
         "music_enabled": False,
         "music_volume": 0.25,
+        "persistent_warning_interval_seconds": 10.0,
     },
     "ui": {"debug": False},
     "score": {

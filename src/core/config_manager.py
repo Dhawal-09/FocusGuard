@@ -73,6 +73,7 @@ class AudioConfig:
     volume: float
     music_enabled: bool
     music_volume: float
+    persistent_warning_interval_seconds: float
 
 
 @dataclass(frozen=True)
@@ -208,6 +209,9 @@ class ConfigManager:
             volume=self._float(audio, "audio", "volume", minimum=0.0, maximum=1.0),
             music_enabled=self._bool(audio, "audio", "music_enabled"),
             music_volume=self._float(audio, "audio", "music_volume", minimum=0.0, maximum=1.0),
+            persistent_warning_interval_seconds=self._float(
+                audio, "audio", "persistent_warning_interval_seconds", minimum=0.0
+            ),
         )
 
         ui_cfg = UIConfig(debug=self._bool(ui, "ui", "debug"))

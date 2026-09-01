@@ -299,7 +299,7 @@ def make_audio(
     mixer = FakeMixerBackend(fail_init=fail_init)
     music = FakeMusicBackend()
     manager = AudioManager(
-        audio_config or AudioConfig(enabled=True, volume=0.5, music_enabled=True, music_volume=0.25),
+        audio_config or AudioConfig(enabled=True, volume=0.5, music_enabled=True, music_volume=0.25, persistent_warning_interval_seconds=10.0),
         phone_config or PhoneConfig(confirm_duration_seconds=0.1, clear_duration_seconds=0.1, warning_cooldown_seconds=1.0),
         mixer_backend=mixer,
         music_backend=music,
@@ -328,7 +328,7 @@ def make_app_config(**overrides) -> AppConfig:
         eyes=EyesConfig(closed_threshold=0.21, open_threshold=0.24, blink_max_duration_seconds=0.05, drowsiness_duration_seconds=0.1),
         head=HeadConfig(yaw_threshold_degrees=20.0, pitch_threshold_degrees=18.0, confirmation_seconds=0.1),
         person=PersonConfig(away_duration_seconds=0.1),
-        audio=AudioConfig(enabled=True, volume=0.5, music_enabled=True, music_volume=0.25),
+        audio=AudioConfig(enabled=True, volume=0.5, music_enabled=True, music_volume=0.25, persistent_warning_interval_seconds=10.0),
         ui=UIConfig(debug=False),
         score=ScoreConfig(starting_score=100, phone_event_penalty=10, drowsiness_event_penalty=5, attention_event_penalty=3, away_event_penalty=5),
         session=SessionConfig(max_event_log_entries=100),
@@ -778,6 +778,162 @@ def test_detection_interval_state_resets_on_new_session(tmp_path: Path) -> None:
     app._process_frame(make_frame(2.0))
 
     assert yolo_model.calls == 2
+
+
+# =========================================================================================
+# Persistent audio reminders (sustained conditions, not just the confirm edge)
+# =========================================================================================
+
+
+def _audio_config_with_reminder_interval(interval_seconds: float) -> AudioConfig:
+    return AudioConfig(
+        enabled=True,
+        volume=0.5,
+        music_enabled=True,
+        music_volume=0.25,
+        persistent_warning_interval_seconds=interval_seconds,
+    )
+
+
+def test_drowsiness_persistent_reminder_fires_after_interval_then_repeats(tmp_path: Path) -> None:
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    landmarker = FakeFaceLandmarker(face_landmarks=[make_landmarks(CLOSED_POINTS, CLOSED_POINTS)])
+    cfg = make_app_config(audio=_audio_config_with_reminder_interval(0.1))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model, landmarker=landmarker)
+    app._start_session(0.0)
+
+    app._process_frame(make_frame(0.0))
+    app._process_frame(make_frame(ts(0.1)))  # crosses drowsiness_duration_seconds=0.1: confirmed
+    assert app._state_manager.state == FocusState.DROWSINESS_SIGNAL
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 1  # the initial one-shot alert
+
+    app._process_frame(make_frame(ts(0.1, 0.05)))  # condition continues, not yet due for a reminder
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 1
+
+    app._process_frame(make_frame(ts(0.1, 0.1)))  # persistent interval elapsed since confirmation
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 2
+
+    app._process_frame(make_frame(ts(0.1, 0.15)))  # too soon for a third
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 2
+
+    app._process_frame(make_frame(ts(0.1, 0.2)))  # another full interval: repeats again
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 3
+
+
+def test_drowsiness_reminder_does_not_fire_if_condition_clears_first(tmp_path: Path) -> None:
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    landmarker = FakeFaceLandmarker(face_landmarks=[make_landmarks(CLOSED_POINTS, CLOSED_POINTS)])
+    cfg = make_app_config(audio=_audio_config_with_reminder_interval(0.1))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model, landmarker=landmarker)
+    app._start_session(0.0)
+    app._process_frame(make_frame(0.0))
+    app._process_frame(make_frame(ts(0.1)))  # confirmed, initial warning
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 1
+
+    landmarker.face_landmarks = [make_landmarks(OPEN_POINTS, OPEN_POINTS)]  # eyes open again
+    app._process_frame(make_frame(ts(0.1, 0.05)))  # clears before the reminder interval elapses
+
+    app._process_frame(make_frame(ts(0.1, 0.2)))  # well past where a reminder would have fired
+
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 1  # no spurious reminder
+
+
+def test_phone_and_attention_persistent_reminders_also_repeat(tmp_path: Path, monkeypatch) -> None:
+    from src.face.head_pose import HeadOrientation, HeadPoseResult
+
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX, PHONE_BOX])
+    landmarker = FakeFaceLandmarker(face_landmarks=[make_landmarks(OPEN_POINTS, OPEN_POINTS)])
+    monkeypatch.setattr(
+        "src.core.app.estimate_head_pose",
+        lambda *a, **k: HeadPoseResult(orientation=HeadOrientation.LEFT, yaw_degrees=-30.0, pitch_degrees=0.0),
+    )
+    cfg = make_app_config(audio=_audio_config_with_reminder_interval(0.1))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model, landmarker=landmarker)
+    app._start_session(0.0)
+
+    app._process_frame(make_frame(0.0))
+    app._process_frame(make_frame(ts(0.1)))  # both phone and attention confirmed
+    assert app._state_manager.state == FocusState.PHONE_DISTRACTION  # phone wins priority
+    assert sounds_of(fakes["audio"])["phone_warning"].played_count == 1
+    assert sounds_of(fakes["audio"])["attention_warning"].played_count == 1
+
+    app._process_frame(make_frame(ts(0.1, 0.1)))  # persistent interval elapsed for both
+
+    assert sounds_of(fakes["audio"])["phone_warning"].played_count == 2
+    assert sounds_of(fakes["audio"])["attention_warning"].played_count == 2
+
+
+def test_reminder_resets_on_pause_so_resume_does_not_fire_immediately(tmp_path: Path) -> None:
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    landmarker = FakeFaceLandmarker(face_landmarks=[make_landmarks(CLOSED_POINTS, CLOSED_POINTS)])
+    cfg = make_app_config(audio=_audio_config_with_reminder_interval(0.1))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model, landmarker=landmarker)
+    app._start_session(0.0)
+    app._process_frame(make_frame(0.0))
+    app._process_frame(make_frame(ts(0.1)))  # confirmed, initial warning
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 1
+
+    app._pause_session(ts(0.1, 0.05))
+    app._resume_session(1000.0)  # a huge real-world gap while paused
+
+    # Without the pause reset, this would immediately look "overdue" (far
+    # more than one interval has passed since confirmation) and fire right
+    # away. It must not - the paused gap was never actually monitored.
+    app._process_frame(make_frame(1000.0))
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 1
+
+    app._process_frame(make_frame(ts(1000.0, 0.1)))  # a fresh interval after resuming
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 2
+
+
+def test_reminder_state_resets_on_new_session(tmp_path: Path) -> None:
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    landmarker = FakeFaceLandmarker(face_landmarks=[make_landmarks(CLOSED_POINTS, CLOSED_POINTS)])
+    cfg = make_app_config(audio=_audio_config_with_reminder_interval(0.1))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model, landmarker=landmarker)
+    app._start_session(0.0)
+    app._process_frame(make_frame(0.0))
+    app._process_frame(make_frame(ts(0.1)))  # confirmed, initial warning
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 1
+
+    app._end_session(ts(0.1, 0.05))
+    app._start_session(ts(0.1, 0.1))  # a new session, well past where an old reminder would fire
+
+    app._process_frame(make_frame(ts(0.1, 0.1)))  # first frame of the new session: fresh onset only
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 1  # no stale reminder carried over
+
+
+def test_reminder_state_resets_on_r_reset(tmp_path: Path) -> None:
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    landmarker = FakeFaceLandmarker(face_landmarks=[make_landmarks(CLOSED_POINTS, CLOSED_POINTS)])
+    cfg = make_app_config(audio=_audio_config_with_reminder_interval(0.1))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model, landmarker=landmarker)
+    app._start_session(0.0)
+    app._process_frame(make_frame(0.0))
+    app._process_frame(make_frame(ts(0.1)))  # confirmed, initial warning
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 1
+
+    app._pause_session(ts(0.1, 0.01))  # R is only honored while paused/idle
+    app._handle_reset(ts(0.1, 0.02))
+
+    app._start_session(ts(0.1, 0.1))
+    app._process_frame(make_frame(ts(0.1, 0.1)))  # fresh session, first frame: no immediate reminder
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 1
+
+
+def test_muted_persistent_reminder_does_not_play_at_app_level(tmp_path: Path) -> None:
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
+    landmarker = FakeFaceLandmarker(face_landmarks=[make_landmarks(CLOSED_POINTS, CLOSED_POINTS)])
+    cfg = make_app_config(audio=_audio_config_with_reminder_interval(0.1))
+    app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model, landmarker=landmarker)
+    app._start_session(0.0)
+    app._audio.set_muted(True)
+
+    app._process_frame(make_frame(0.0))
+    app._process_frame(make_frame(ts(0.1)))  # would confirm + warn if unmuted
+    app._process_frame(make_frame(ts(0.1, 0.1)))  # would repeat if unmuted
+
+    assert sounds_of(fakes["audio"])["drowsiness_warning"].played_count == 0
 
 
 # =========================================================================================

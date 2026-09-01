@@ -97,6 +97,68 @@ def _default_sound_factory(path: str) -> SoundLike:
     return pygame.mixer.Sound(path)
 
 
+# Absorbs float64 subtraction noise at realistic time.monotonic() magnitudes,
+# the same tolerance and reasoning src/state/temporal_filter.py documents for
+# its own duration-boundary comparisons.
+_REMINDER_EPSILON_SECONDS = 1e-9
+
+
+class _PersistentReminder:
+    """Tracks one continuously-active condition (e.g. "phone distraction is
+    currently confirmed") and decides when a repeat reminder is due.
+
+    The *initial* alert for a condition is a separate, pre-existing concern
+    (play_phone_warning() etc., called by the caller on the filter's
+    just_confirmed edge) - this class only handles repeats while the
+    condition remains continuously true without ever clearing. On the
+    first update(active=True, ...) call after being inactive, it records a
+    baseline and returns False (never double-fires alongside the initial
+    alert); on each later update(active=True, ...) call, once
+    interval_seconds has elapsed since the last reminder (or the
+    baseline), it returns True and re-baselines from that timestamp. Any
+    update(active=False, ...) call resets it completely - the next onset
+    starts a fresh interval, exactly as specified.
+
+    Timestamp-based (not frame-count-based), monotonicity-validated, and
+    epsilon-tolerant at the boundary - the same conventions every other
+    temporal primitive in this codebase already follows (see
+    src/state/temporal_filter.py).
+    """
+
+    def __init__(self, interval_seconds: float) -> None:
+        if interval_seconds < 0:
+            raise ValueError(f"interval_seconds must be >= 0, got {interval_seconds}")
+        self._interval_seconds = interval_seconds
+        self._last_timestamp: float | None = None
+        self._last_reminder_timestamp: float | None = None
+
+    def update(self, active: bool, now: float) -> bool:
+        if self._last_timestamp is not None and now < self._last_timestamp:
+            raise ValueError(f"Timestamps must be monotonic: received {now} after {self._last_timestamp}")
+        self._last_timestamp = now
+
+        if not active:
+            self._last_reminder_timestamp = None
+            return False
+
+        if self._last_reminder_timestamp is None:
+            self._last_reminder_timestamp = now
+            return False
+
+        elapsed = now - self._last_reminder_timestamp
+        if elapsed >= self._interval_seconds - _REMINDER_EPSILON_SECONDS:
+            self._last_reminder_timestamp = now
+            return True
+        return False
+
+    def reset(self) -> None:
+        """Discard in-progress tracking without needing an update() call -
+        used when the caller knows monitoring itself paused/stopped (e.g.
+        session pause), so a resumed condition never appears to have been
+        continuously active across the gap."""
+        self._last_reminder_timestamp = None
+
+
 class AudioManager:
     """Loads warning sounds and background music, plays them on request,
     and applies mute/volume/cooldown - nothing else.
@@ -129,6 +191,11 @@ class AudioManager:
         self._music_loaded = False
         self._muted = False
         self._is_initialized = False
+
+        interval = audio_config.persistent_warning_interval_seconds
+        self._phone_reminder = _PersistentReminder(interval)
+        self._drowsiness_reminder = _PersistentReminder(interval)
+        self._attention_reminder = _PersistentReminder(interval)
 
     @property
     def is_initialized(self) -> bool:
@@ -221,6 +288,61 @@ class AudioManager:
         if not self._can_play():
             return False
         return self._play_sound("session_complete")
+
+    # --- Persistent condition reminders -----------------------------------------
+    #
+    # While a distraction condition (phone/drowsiness/attention) remains
+    # continuously confirmed without ever clearing, repeat its warning every
+    # audio.persistent_warning_interval_seconds - distinct from the initial
+    # one-shot play_*_warning() call above (still triggered by the caller on
+    # the filter's just_confirmed edge, unchanged). Call notify_*() every
+    # frame with the condition's *current* confirmed/active state, not just
+    # on edges - _PersistentReminder needs the continuous signal to measure
+    # "has this stayed true long enough since the last reminder".
+    #
+    # The reminder *timer* always advances via _PersistentReminder.update(),
+    # regardless of mute/enabled state - only the actual sound emission is
+    # gated by _can_play(). This means muting never lets a backlog build up:
+    # the cadence keeps progressing silently, and unmuting mid-cycle simply
+    # resumes at the next naturally-due reminder rather than firing
+    # immediately to "catch up".
+
+    def _play_sound_if_allowed(self, key: str) -> bool:
+        if not self._can_play():
+            return False
+        return self._play_sound(key)
+
+    def notify_phone_distraction(self, active: bool, now: float) -> bool:
+        """Call every frame with whether PHONE_DISTRACTION is currently
+        confirmed. Returns True only if a repeat warning was actually
+        played this call."""
+        if not self._phone_reminder.update(active, now):
+            return False
+        return self._play_sound_if_allowed("phone_warning")
+
+    def notify_drowsiness(self, active: bool, now: float) -> bool:
+        """Call every frame with whether drowsiness is currently
+        confirmed (DrowsinessFilter.is_drowsy)."""
+        if not self._drowsiness_reminder.update(active, now):
+            return False
+        return self._play_sound_if_allowed("drowsiness_warning")
+
+    def notify_attention_diverted(self, active: bool, now: float) -> bool:
+        """Call every frame with whether attention is currently diverted
+        (HeadOrientationFilter.is_diverted)."""
+        if not self._attention_reminder.update(active, now):
+            return False
+        return self._play_sound_if_allowed("attention_warning")
+
+    def reset_persistent_reminders(self) -> None:
+        """Clear all persistent-reminder tracking - call whenever
+        monitoring itself stops or restarts (session start, pause, end,
+        reset) so a condition never appears to have "continued" across a
+        gap it wasn't actually being observed through, and a new session
+        never inherits a previous one's in-progress reminder cycle."""
+        self._phone_reminder.reset()
+        self._drowsiness_reminder.reset()
+        self._attention_reminder.reset()
 
     # --- Background music (PRD section 21) ------------------------------------
 

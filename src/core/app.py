@@ -307,18 +307,25 @@ class FocusGuardApp:
                 self._audio.play_phone_warning(timestamp)
         if phone_result.just_cleared:
             self._session_manager.record_event(self._event_manager.phone_cleared(timestamp))
+        # Repeats the phone warning every audio.persistent_warning_interval_seconds
+        # while still confirmed, without spamming every frame - called
+        # unconditionally (not gated on just_confirmed/just_cleared) since
+        # it needs the continuous is_confirmed signal, not just the edges.
+        self._audio.notify_phone_distraction(phone_result.is_confirmed, timestamp)
 
         if drowsy_result.just_confirmed:
             self._session_manager.record_event(self._event_manager.drowsiness_confirmed(timestamp))
             self._audio.play_drowsiness_warning()
         if drowsy_result.just_cleared:
             self._session_manager.record_event(self._event_manager.drowsiness_cleared(timestamp))
+        self._audio.notify_drowsiness(drowsy_result.is_drowsy, timestamp)
 
         if head_result.just_diverted:
             self._session_manager.record_event(self._event_manager.attention_diverted(timestamp))
             self._audio.play_attention_warning()
         if head_result.just_restored:
             self._session_manager.record_event(self._event_manager.attention_restored(timestamp))
+        self._audio.notify_attention_diverted(head_result.is_diverted, timestamp)
 
         if away_result.just_confirmed:
             self._session_manager.record_event(self._event_manager.person_left(timestamp))
@@ -367,12 +374,17 @@ class FocusGuardApp:
         self._last_detections = []
         self._last_face_result = None
         self._last_yolo_timestamp = None
+        self._audio.reset_persistent_reminders()
         self._session_manager.record_event(self._event_manager.session_started(now))
         self._audio.start_music()
 
     def _pause_session(self, now: float) -> None:
         self._session_manager.pause_session(now)
         self._audio.pause_music()
+        # A paused session isn't being monitored - without this, a long
+        # pause would otherwise look like the condition "continued" across
+        # the whole gap once resumed, firing a spurious immediate reminder.
+        self._audio.reset_persistent_reminders()
 
     def _resume_session(self, now: float) -> None:
         self._session_manager.resume_session(now)
@@ -391,6 +403,7 @@ class FocusGuardApp:
         self._state_manager.end_session(now)
         self._audio.stop_music()
         self._audio.play_session_complete()
+        self._audio.reset_persistent_reminders()
         self._session_start_timestamp = None
 
         try:
@@ -410,6 +423,7 @@ class FocusGuardApp:
         self._session_manager.reset()
         self._state_manager.end_session(now)
         self._audio.stop_music()
+        self._audio.reset_persistent_reminders()
         self._session_start_timestamp = None
         self._last_snapshot = None
         self._last_detections = []

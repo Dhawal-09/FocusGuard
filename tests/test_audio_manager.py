@@ -19,9 +19,11 @@ from src.audio.audio_manager import (
     DEFAULT_SOUND_PATHS,
     AudioError,
     AudioManager,
+    _PersistentReminder,
 )
 
 COOLDOWN = 10.0
+REMINDER_INTERVAL = 10.0
 
 
 def ts(*parts: float) -> float:
@@ -29,7 +31,13 @@ def ts(*parts: float) -> float:
 
 
 def make_audio_config(**overrides) -> AudioConfig:
-    defaults = dict(enabled=True, volume=0.7, music_enabled=True, music_volume=0.25)
+    defaults = dict(
+        enabled=True,
+        volume=0.7,
+        music_enabled=True,
+        music_volume=0.25,
+        persistent_warning_interval_seconds=REMINDER_INTERVAL,
+    )
     defaults.update(overrides)
     return AudioConfig(**defaults)
 
@@ -691,3 +699,283 @@ def test_shutdown_stops_music() -> None:
     manager.shutdown()
 
     assert music.stop_calls == 1
+
+
+# =========================================================================================
+# _PersistentReminder (direct, isolated tests of the pure timer logic)
+# =========================================================================================
+
+
+def test_persistent_reminder_rejects_negative_interval() -> None:
+    with pytest.raises(ValueError):
+        _PersistentReminder(-1.0)
+
+
+def test_persistent_reminder_first_onset_does_not_fire() -> None:
+    reminder = _PersistentReminder(REMINDER_INTERVAL)
+
+    assert reminder.update(True, 0.0) is False
+
+
+def test_persistent_reminder_does_not_fire_before_interval_elapses() -> None:
+    reminder = _PersistentReminder(REMINDER_INTERVAL)
+    reminder.update(True, 0.0)
+
+    result = reminder.update(True, REMINDER_INTERVAL - 1.0)
+
+    assert result is False
+
+
+def test_persistent_reminder_fires_exactly_at_interval_boundary() -> None:
+    reminder = _PersistentReminder(REMINDER_INTERVAL)
+    reminder.update(True, 0.0)
+
+    result = reminder.update(True, REMINDER_INTERVAL)
+
+    assert result is True
+
+
+def test_persistent_reminder_fires_again_after_a_second_interval() -> None:
+    reminder = _PersistentReminder(REMINDER_INTERVAL)
+    reminder.update(True, 0.0)
+    reminder.update(True, REMINDER_INTERVAL)
+
+    result = reminder.update(True, REMINDER_INTERVAL * 2)
+
+    assert result is True
+
+
+def test_persistent_reminder_does_not_fire_again_immediately_after_firing() -> None:
+    reminder = _PersistentReminder(REMINDER_INTERVAL)
+    reminder.update(True, 0.0)
+    reminder.update(True, REMINDER_INTERVAL)
+
+    result = reminder.update(True, REMINDER_INTERVAL + 1.0)
+
+    assert result is False
+
+
+def test_persistent_reminder_condition_clearing_resets_it() -> None:
+    reminder = _PersistentReminder(REMINDER_INTERVAL)
+    reminder.update(True, 0.0)
+    reminder.update(True, REMINDER_INTERVAL)  # fires
+
+    cleared = reminder.update(False, REMINDER_INTERVAL + 0.1)
+    assert cleared is False
+
+    # A fresh onset right after clearing must NOT fire immediately - it's a
+    # new cycle, not a continuation of the old one.
+    fresh_onset = reminder.update(True, REMINDER_INTERVAL + 0.2)
+    assert fresh_onset is False
+
+
+def test_persistent_reminder_explicit_reset_forces_a_fresh_onset() -> None:
+    reminder = _PersistentReminder(REMINDER_INTERVAL)
+    reminder.update(True, 0.0)
+
+    reminder.reset()
+
+    # Without the reset, this timestamp would have fired (it's exactly the
+    # interval boundary from the original onset). After reset, it must be
+    # treated as a brand new onset instead.
+    result = reminder.update(True, REMINDER_INTERVAL)
+    assert result is False
+
+
+def test_persistent_reminder_out_of_order_timestamp_raises_value_error() -> None:
+    reminder = _PersistentReminder(REMINDER_INTERVAL)
+    reminder.update(True, 5.0)
+
+    with pytest.raises(ValueError):
+        reminder.update(True, 4.0)
+
+
+def test_persistent_reminder_zero_interval_fires_every_active_call_after_onset() -> None:
+    reminder = _PersistentReminder(0.0)
+    reminder.update(True, 0.0)  # onset, never fires
+
+    assert reminder.update(True, 0.0) is True
+    assert reminder.update(True, 0.0001) is True
+
+
+# =========================================================================================
+# AudioManager.notify_*() / reset_persistent_reminders() (PRD-adjacent feature)
+# =========================================================================================
+
+
+def test_notify_phone_distraction_first_onset_does_not_play() -> None:
+    manager, _, _ = make_manager()
+    manager.init()
+
+    result = manager.notify_phone_distraction(True, 0.0)
+
+    assert result is False
+    assert sounds_of(manager)["phone_warning"].played_count == 0
+
+
+def test_notify_phone_distraction_no_repeat_before_interval() -> None:
+    manager, _, _ = make_manager()
+    manager.init()
+    manager.notify_phone_distraction(True, 0.0)
+
+    result = manager.notify_phone_distraction(True, REMINDER_INTERVAL - 1.0)
+
+    assert result is False
+    assert sounds_of(manager)["phone_warning"].played_count == 0
+
+
+def test_notify_phone_distraction_plays_at_interval_boundary() -> None:
+    manager, _, _ = make_manager()
+    manager.init()
+    manager.notify_phone_distraction(True, 0.0)
+
+    result = manager.notify_phone_distraction(True, REMINDER_INTERVAL)
+
+    assert result is True
+    assert sounds_of(manager)["phone_warning"].played_count == 1
+
+
+def test_notify_phone_distraction_repeats_while_condition_persists() -> None:
+    manager, _, _ = make_manager()
+    manager.init()
+    manager.notify_phone_distraction(True, 0.0)
+    manager.notify_phone_distraction(True, REMINDER_INTERVAL)
+    manager.notify_phone_distraction(True, REMINDER_INTERVAL * 2 - 1.0)  # too soon, no repeat
+
+    manager.notify_phone_distraction(True, REMINDER_INTERVAL * 2)
+
+    assert sounds_of(manager)["phone_warning"].played_count == 2
+
+
+def test_notify_phone_distraction_resets_when_condition_clears() -> None:
+    manager, _, _ = make_manager()
+    manager.init()
+    manager.notify_phone_distraction(True, 0.0)
+    manager.notify_phone_distraction(True, REMINDER_INTERVAL)  # 1st reminder
+
+    manager.notify_phone_distraction(False, REMINDER_INTERVAL + 1.0)  # cleared
+    manager.notify_phone_distraction(True, REMINDER_INTERVAL + 2.0)  # fresh onset, no fire
+    result = manager.notify_phone_distraction(True, REMINDER_INTERVAL + 2.0 + REMINDER_INTERVAL - 1.0)
+
+    assert result is False  # would have fired only if the old cycle had continued
+    assert sounds_of(manager)["phone_warning"].played_count == 1  # still just the one from before
+
+
+def test_notify_drowsiness_and_notify_attention_diverted_follow_the_same_pattern() -> None:
+    manager, _, _ = make_manager()
+    manager.init()
+
+    manager.notify_drowsiness(True, 0.0)
+    drowsy_result = manager.notify_drowsiness(True, REMINDER_INTERVAL)
+    manager.notify_attention_diverted(True, 0.0)
+    attention_result = manager.notify_attention_diverted(True, REMINDER_INTERVAL)
+
+    assert drowsy_result is True
+    assert attention_result is True
+    assert sounds_of(manager)["drowsiness_warning"].played_count == 1
+    assert sounds_of(manager)["attention_warning"].played_count == 1
+
+
+def test_phone_drowsiness_and_attention_reminders_have_independent_timers() -> None:
+    manager, _, _ = make_manager()
+    manager.init()
+
+    manager.notify_phone_distraction(True, 0.0)
+    manager.notify_drowsiness(True, 5.0)  # different onset time, independent timer
+
+    phone_due = manager.notify_phone_distraction(True, REMINDER_INTERVAL)  # 10.0
+    drowsy_not_due = manager.notify_drowsiness(True, REMINDER_INTERVAL)  # only 5s since its own onset
+
+    assert phone_due is True
+    assert drowsy_not_due is False
+    assert sounds_of(manager)["phone_warning"].played_count == 1
+    assert sounds_of(manager)["drowsiness_warning"].played_count == 0
+
+
+def test_notify_while_muted_does_not_play_but_timer_still_advances() -> None:
+    manager, _, _ = make_manager()
+    manager.init()
+    manager.notify_phone_distraction(True, 0.0)
+    manager.set_muted(True)
+
+    due_but_muted = manager.notify_phone_distraction(True, REMINDER_INTERVAL)
+    assert due_but_muted is False
+    assert sounds_of(manager)["phone_warning"].played_count == 0
+
+    manager.set_muted(False)
+    # The cadence must have progressed even while muted - the next natural
+    # due time is REMINDER_INTERVAL after the muted trigger, not immediate.
+    too_soon = manager.notify_phone_distraction(True, REMINDER_INTERVAL + 1.0)
+    assert too_soon is False
+    assert sounds_of(manager)["phone_warning"].played_count == 0
+
+    right_on_time = manager.notify_phone_distraction(True, REMINDER_INTERVAL * 2)
+    assert right_on_time is True
+    assert sounds_of(manager)["phone_warning"].played_count == 1
+
+
+def test_notify_when_disabled_never_plays() -> None:
+    manager, _, _ = make_manager(audio_config=make_audio_config(enabled=False))
+    manager.init()
+    manager.notify_phone_distraction(True, 0.0)
+
+    result = manager.notify_phone_distraction(True, REMINDER_INTERVAL)
+
+    assert result is False
+
+
+def test_notify_before_init_never_plays_and_does_not_raise() -> None:
+    manager, _, _ = make_manager()
+    manager.notify_phone_distraction(True, 0.0)
+
+    result = manager.notify_phone_distraction(True, REMINDER_INTERVAL)  # must not raise
+
+    assert result is False
+
+
+def test_notify_with_missing_sound_file_returns_false_and_does_not_raise() -> None:
+    manager, _, _ = make_manager(fail_keys=frozenset({"phone_warning"}))
+    manager.init()
+    manager.notify_phone_distraction(True, 0.0)
+
+    result = manager.notify_phone_distraction(True, REMINDER_INTERVAL)  # must not raise
+
+    assert result is False
+
+
+def test_reset_persistent_reminders_clears_all_three_conditions() -> None:
+    manager, _, _ = make_manager()
+    manager.init()
+    manager.notify_phone_distraction(True, 0.0)
+    manager.notify_drowsiness(True, 0.0)
+    manager.notify_attention_diverted(True, 0.0)
+
+    manager.reset_persistent_reminders()
+
+    # Without the reset, all three would fire at REMINDER_INTERVAL (their
+    # shared onset). After reset, each must be treated as a fresh onset.
+    assert manager.notify_phone_distraction(True, REMINDER_INTERVAL) is False
+    assert manager.notify_drowsiness(True, REMINDER_INTERVAL) is False
+    assert manager.notify_attention_diverted(True, REMINDER_INTERVAL) is False
+
+
+def test_reset_persistent_reminders_before_init_does_not_raise() -> None:
+    manager, _, _ = make_manager()
+
+    manager.reset_persistent_reminders()  # must not raise
+
+
+def test_existing_one_shot_play_phone_warning_unaffected_by_persistent_reminder_state() -> None:
+    """The pre-existing one-shot method and its own cooldown must behave
+    identically to before this feature existed - fully independent of the
+    new notify_*()/reset_persistent_reminders() machinery."""
+    manager, _, _ = make_manager()
+    manager.init()
+
+    manager.notify_phone_distraction(True, 0.0)  # onset only, does not play
+    first = manager.play_phone_warning(0.0)
+    second_within_cooldown = manager.play_phone_warning(COOLDOWN - 1.0)
+
+    assert first is True
+    assert second_within_cooldown is False
+    assert sounds_of(manager)["phone_warning"].played_count == 1
