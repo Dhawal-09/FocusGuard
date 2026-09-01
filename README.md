@@ -50,7 +50,10 @@ is documented commit-by-commit and PR-by-PR in this repository's history.
 - Python 3.11 (see "Why Python 3.11" below)
 - A webcam
 - A MediaPipe Face Landmarker model file at `models/face_landmarker.task` (not
-  auto-downloaded; download it from MediaPipe's model index and place it there)
+  auto-downloaded). Official download:
+  [`face_landmarker.task`](https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task)
+  (from the [MediaPipe Face Landmarker guide](https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker)) —
+  save it to `models/face_landmarker.task`.
 
 ## Why Python 3.11 and These Dependency Versions
 
@@ -120,6 +123,53 @@ real-time monitoring loop. Press `SPACE` to start a session. A failure to open
 the camera, load a model, or initialize Pygame is reported with a readable
 message and a non-zero exit code; a failed audio device is reported but does
 not stop the app (it just runs without sound).
+
+## Demo Walkthrough
+
+A complete run-through (per `FOCUSGUARD_PRD.md` section 38) takes about 2–3
+minutes and exercises every signal the app detects:
+
+1. **Launch**: `python main.py`.
+2. Press `SPACE` to **start a session**.
+3. **Sit normally**, facing the camera. Expected status: `FOCUSED`.
+4. **Pick up your phone**. Expected: `PHONE DISTRACTION`, plus a phone warning
+   sound (if `phone_warning.mp3` is present — see Audio Assets below).
+5. **Put the phone away**. Expected: back to `FOCUSED`, with a "focus restored"
+   moment in the event log.
+6. **Close your eyes** for longer than the configured drowsiness threshold
+   (`eyes.drowsiness_duration_seconds`, 1.20s by default). Expected:
+   `DROWSINESS SIGNAL`, plus a drowsiness warning sound.
+7. **Look left or right**, away from the camera. Expected: `ATTENTION DIVERTED`.
+8. **Leave the camera's view** for longer than `person.away_duration_seconds`
+   (3.0s by default). Expected: `AWAY`.
+9. **Return** to the frame. Expected: back to `FOCUSED`.
+10. Press `Q` or `ESC` to **end the session**. The terminal prints a summary
+    (session duration, focused duration, phone/drowsiness/attention/away
+    event counts, longest focus streak, estimated focus score), and a JSON
+    copy is saved to `logs/`.
+11. Restart and press `D` to **enable debug mode**: YOLO detection boxes with
+    class name and confidence, face landmarks, the eye-openness metric, head
+    yaw/pitch, per-signal confirmation timers, current FPS, and inference
+    latency are all overlaid on the camera feed.
+
+## Audio Assets (Optional)
+
+Audio is entirely optional — `AudioManager` never crashes on a missing file,
+it just plays nothing. To enable warnings and background music, add your own
+files (PRD section 21: "audio files are user-provided assets" — FocusGuard
+does not download or ship any) using these exact filenames:
+
+```text
+assets/
+├── sounds/
+│   ├── phone_warning.mp3        # PHONE_DISTRACTION
+│   ├── drowsiness_warning.mp3   # DROWSINESS_SIGNAL
+│   ├── attention_warning.mp3    # ATTENTION_DIVERTED
+│   ├── focus_restored.mp3       # returning to FOCUSED from a distraction
+│   └── session_complete.mp3     # session ended
+└── music/
+    └── focus_music.mp3          # optional background music (audio.music_enabled)
+```
 
 ## Running Tests
 
@@ -214,3 +264,7 @@ real-time, portfolio-grade computer-vision desktop application, built
 incrementally phase-by-phase per section 39. Out of scope by design (PRD
 section 43): a custom-trained detection model, personalized calibration,
 browser integration, and application packaging/distribution.
+
+## License
+
+[MIT](LICENSE).

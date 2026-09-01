@@ -1,4 +1,4 @@
-"""Verify the Phase 0 package structure imports cleanly."""
+"""Verify every module in the package structure imports cleanly."""
 
 from __future__ import annotations
 
