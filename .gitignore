@@ -47,3 +47,4 @@ dist/
 # Coverage
 .coverage
 htmlcov/
+docs/
