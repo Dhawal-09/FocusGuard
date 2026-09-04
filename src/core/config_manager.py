@@ -60,6 +60,7 @@ class HeadConfig:
     yaw_threshold_degrees: float
     pitch_threshold_degrees: float
     confirmation_seconds: float
+    calibration_seconds: float
 
 
 @dataclass(frozen=True)
@@ -198,6 +199,7 @@ class ConfigManager:
             yaw_threshold_degrees=self._float(head, "head", "yaw_threshold_degrees", minimum=0.0, maximum=90.0),
             pitch_threshold_degrees=self._float(head, "head", "pitch_threshold_degrees", minimum=0.0, maximum=90.0),
             confirmation_seconds=self._float(head, "head", "confirmation_seconds", minimum=0.0),
+            calibration_seconds=self._float(head, "head", "calibration_seconds", minimum=0.0),
         )
 
         person_cfg = PersonConfig(

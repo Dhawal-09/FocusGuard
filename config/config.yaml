@@ -33,14 +33,25 @@ eyes:
                                     # thresholds keep the previous state (hysteresis,
                                     # avoids flicker right at the boundary)
   blink_max_duration_seconds: 0.45 # closures shorter than this are a normal blink
-  drowsiness_duration_seconds: 1.20 # eyes must stay CLOSED at least this long before
-                                     # DROWSINESS_SIGNAL fires
+  drowsiness_duration_seconds: 5.00 # eyes must stay CLOSED at least this long before
+                                     # DROWSINESS_SIGNAL fires (raised from 1.20 - looking
+                                     # down while typing was tripping this too fast)
 
 head:
   yaw_threshold_degrees: 20        # left/right head rotation beyond this = off-center
   pitch_threshold_degrees: 18      # up/down head tilt beyond this = off-center
   confirmation_seconds: 0.80       # head must stay off-center this long before
                                     # ATTENTION_DIVERTED is confirmed
+  calibration_seconds: 2.50        # at the start of each session, average the measured
+                                    # yaw/pitch and use it as the "looking at the screen"
+                                    # baseline (0 = calibrate instantly off a single frame).
+                                    # Fixes false ATTENTION_DIVERTED caused by webcam
+                                    # placement/face geometry that isn't perfectly centered
+                                    # by default. Only the second half of this window is
+                                    # actually averaged in - the first half is a settle
+                                    # grace period so post-SPACE repositioning doesn't get
+                                    # baked into the baseline. Look straight at the screen
+                                    # and hold still for this long right after starting.
 
 person:
   away_duration_seconds: 3.0       # person must be undetected this long before AWAY fires

@@ -33,6 +33,7 @@ VALID_CONFIG: dict[str, Any] = {
         "yaw_threshold_degrees": 20,
         "pitch_threshold_degrees": 18,
         "confirmation_seconds": 0.80,
+        "calibration_seconds": 0.0,
     },
     "person": {"away_duration_seconds": 3.0},
     "audio": {

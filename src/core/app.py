@@ -68,7 +68,7 @@ from src.detection.yolo_detector import DetectionError, YOLODetector
 from src.events.event_manager import EventManager
 from src.face.eye_metrics import EyeState
 from src.face.face_analyzer import FaceAnalysisError, FaceAnalysisResult, FaceAnalyzer
-from src.face.head_pose import HeadOrientation, estimate_head_pose
+from src.face.head_pose import HeadOrientation, classify_orientation, estimate_head_pose
 from src.session.session_manager import SessionManager, SessionSummary
 from src.state.drowsiness_filter import DrowsinessFilter
 from src.state.head_orientation_filter import HeadOrientationFilter
@@ -117,6 +117,20 @@ class FocusGuardApp:
 
         self._debug = config.ui.debug
         self._running = False
+
+        # Head-pose calibration (PRD section 43 "personalized calibration"):
+        # yaw/pitch=0 from solvePnP assumes a generic reference face and a
+        # camera pointed exactly at it, which is rarely true for a real webcam
+        # placement. Instead of trusting raw 0 as "looking at the screen", the
+        # first calibration_seconds of each session average the measured
+        # yaw/pitch and store that as a per-session baseline, offsetting every
+        # reading afterward. Reset on every _start_session() so a new session
+        # (new seating position, new camera angle) recalibrates from scratch.
+        self._head_baseline_yaw = 0.0
+        self._head_baseline_pitch = 0.0
+        self._head_calibrated = False
+        self._head_calibration_start: float | None = None
+        self._head_calibration_samples: list[tuple[float, float, float]] = []
         self._session_start_timestamp: float | None = None
 
         self._fps: float | None = None
@@ -215,6 +229,46 @@ class FocusGuardApp:
         elapsed = timestamp - self._last_yolo_timestamp
         return elapsed >= self._config.yolo.detection_interval_seconds - _DETECTION_INTERVAL_EPSILON_SECONDS
 
+    def _classify_head_orientation(self, head_result, timestamp: float) -> HeadOrientation:
+        """Classify this frame's head pose relative to the per-session
+        calibration baseline (see the calibration state comment in
+        __init__), rather than against raw solvePnP zero.
+
+        While the calibration window is still filling up, orientation is
+        reported as CENTER unconditionally - the baseline isn't known yet,
+        so nothing should be able to fire ATTENTION_DIVERTED off of it.
+
+        Only the second half of the window is averaged into the baseline
+        (a "settle" grace period): the first moments right after pressing
+        SPACE are often still-repositioning noise (sitting down, adjusting),
+        not a genuine "looking at the screen" pose - averaging those in
+        would bake a bad baseline that then reads *actual* centered posture
+        as diverted, and vice versa.
+        """
+        if head_result is None or head_result.yaw_degrees is None or head_result.pitch_degrees is None:
+            return HeadOrientation.UNKNOWN
+
+        if not self._head_calibrated:
+            if self._head_calibration_start is None:
+                self._head_calibration_start = timestamp
+            self._head_calibration_samples.append((timestamp, head_result.yaw_degrees, head_result.pitch_degrees))
+
+            if timestamp - self._head_calibration_start >= self._config.head.calibration_seconds:
+                settle_cutoff = self._head_calibration_start + self._config.head.calibration_seconds / 2.0
+                usable = [s for s in self._head_calibration_samples if s[0] >= settle_cutoff] or self._head_calibration_samples
+                self._head_baseline_yaw = sum(s[1] for s in usable) / len(usable)
+                self._head_baseline_pitch = sum(s[2] for s in usable) / len(usable)
+                self._head_calibrated = True
+
+            return HeadOrientation.CENTER
+
+        return classify_orientation(
+            head_result.yaw_degrees - self._head_baseline_yaw,
+            head_result.pitch_degrees - self._head_baseline_pitch,
+            self._config.head.yaw_threshold_degrees,
+            self._config.head.pitch_threshold_degrees,
+        )
+
     def _process_frame(self, frame: Frame) -> None:
         if self._should_run_detection(frame.timestamp):
             try:
@@ -251,13 +305,15 @@ class FocusGuardApp:
                 self._config.head.pitch_threshold_degrees,
             )
 
+        head_orientation = self._classify_head_orientation(head_result, frame.timestamp)
+
         snapshot = build_perception_snapshot(
             frame.timestamp,
             detections,
             face_present=face_result.face_detected,
             eyes_state=face_result.eyes_state,
             eye_metric=face_result.eye_metric,
-            head_orientation=head_result.orientation if head_result else HeadOrientation.UNKNOWN,
+            head_orientation=head_orientation,
             head_yaw=head_result.yaw_degrees if head_result else None,
             head_pitch=head_result.pitch_degrees if head_result else None,
         )
@@ -374,6 +430,11 @@ class FocusGuardApp:
         self._last_detections = []
         self._last_face_result = None
         self._last_yolo_timestamp = None
+        self._head_baseline_yaw = 0.0
+        self._head_baseline_pitch = 0.0
+        self._head_calibrated = False
+        self._head_calibration_start = None
+        self._head_calibration_samples = []
         self._audio.reset_persistent_reminders()
         self._session_manager.record_event(self._event_manager.session_started(now))
         self._audio.start_music()

@@ -326,7 +326,7 @@ def make_app_config(**overrides) -> AppConfig:
         phone=PhoneConfig(confirm_duration_seconds=0.1, clear_duration_seconds=0.1, warning_cooldown_seconds=1.0),
         face=FaceConfig(model="models/face_landmarker.task"),
         eyes=EyesConfig(closed_threshold=0.21, open_threshold=0.24, blink_max_duration_seconds=0.05, drowsiness_duration_seconds=0.1),
-        head=HeadConfig(yaw_threshold_degrees=20.0, pitch_threshold_degrees=18.0, confirmation_seconds=0.1),
+        head=HeadConfig(yaw_threshold_degrees=20.0, pitch_threshold_degrees=18.0, confirmation_seconds=0.1, calibration_seconds=0.0),
         person=PersonConfig(away_duration_seconds=0.1),
         audio=AudioConfig(enabled=True, volume=0.5, music_enabled=True, music_volume=0.25, persistent_warning_interval_seconds=10.0),
         ui=UIConfig(debug=False),
@@ -560,14 +560,19 @@ def test_attention_diverted_after_sustained_off_center_head(tmp_path: Path, monk
     landmarker = FakeFaceLandmarker(face_landmarks=[make_landmarks(OPEN_POINTS, OPEN_POINTS)])
     app, fakes = make_app(tmp_path, yolo_model=yolo_model, landmarker=landmarker)
 
+    app._start_session(0.0)
+    # head.calibration_seconds=0.0 in the test config, so this first frame
+    # (still using the autouse CENTER/(0,0) fixture) instantly becomes the
+    # calibration baseline before the LEFT override below takes effect.
+    app._process_frame(make_frame(0.0))
+
     monkeypatch.setattr(
         "src.core.app.estimate_head_pose",
         lambda *a, **k: HeadPoseResult(orientation=HeadOrientation.LEFT, yaw_degrees=-30.0, pitch_degrees=0.0),
     )
 
-    app._start_session(0.0)
-    app._process_frame(make_frame(0.0))
-    app._process_frame(make_frame(ts(0.1)))  # crosses head.confirmation_seconds=0.1
+    app._process_frame(make_frame(ts(0.1)))  # off-center begins, relative to the (0,0) baseline
+    app._process_frame(make_frame(ts(0.2)))  # crosses head.confirmation_seconds=0.1
 
     assert app._state_manager.state == FocusState.ATTENTION_DIVERTED
     assert app._session_manager.attention_diversion_count == 1
@@ -841,23 +846,28 @@ def test_drowsiness_reminder_does_not_fire_if_condition_clears_first(tmp_path: P
 def test_phone_and_attention_persistent_reminders_also_repeat(tmp_path: Path, monkeypatch) -> None:
     from src.face.head_pose import HeadOrientation, HeadPoseResult
 
-    yolo_model = FakeYoloModel(entries=[PERSON_BOX, PHONE_BOX])
+    yolo_model = FakeYoloModel(entries=[PERSON_BOX])
     landmarker = FakeFaceLandmarker(face_landmarks=[make_landmarks(OPEN_POINTS, OPEN_POINTS)])
-    monkeypatch.setattr(
-        "src.core.app.estimate_head_pose",
-        lambda *a, **k: HeadPoseResult(orientation=HeadOrientation.LEFT, yaw_degrees=-30.0, pitch_degrees=0.0),
-    )
     cfg = make_app_config(audio=_audio_config_with_reminder_interval(0.1))
     app, fakes = make_app(tmp_path, config=cfg, yolo_model=yolo_model, landmarker=landmarker)
     app._start_session(0.0)
 
+    # Calibration frame: no phone yet, CENTER head (autouse fixture) -> baseline (0,0).
     app._process_frame(make_frame(0.0))
-    app._process_frame(make_frame(ts(0.1)))  # both phone and attention confirmed
+
+    yolo_model.entries = [PERSON_BOX, PHONE_BOX]
+    monkeypatch.setattr(
+        "src.core.app.estimate_head_pose",
+        lambda *a, **k: HeadPoseResult(orientation=HeadOrientation.LEFT, yaw_degrees=-30.0, pitch_degrees=0.0),
+    )
+
+    app._process_frame(make_frame(ts(0.1)))  # both phone and attention timers start now
+    app._process_frame(make_frame(ts(0.2)))  # both confirmed (0.1s elapsed)
     assert app._state_manager.state == FocusState.PHONE_DISTRACTION  # phone wins priority
     assert sounds_of(fakes["audio"])["phone_warning"].played_count == 1
     assert sounds_of(fakes["audio"])["attention_warning"].played_count == 1
 
-    app._process_frame(make_frame(ts(0.1, 0.1)))  # persistent interval elapsed for both
+    app._process_frame(make_frame(ts(0.2, 0.1)))  # persistent interval elapsed for both
 
     assert sounds_of(fakes["audio"])["phone_warning"].played_count == 2
     assert sounds_of(fakes["audio"])["attention_warning"].played_count == 2
