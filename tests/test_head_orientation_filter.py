@@ -22,6 +22,7 @@ def make_config(confirmation_seconds: float = CONFIRM) -> HeadConfig:
         yaw_threshold_degrees=20.0,
         pitch_threshold_degrees=18.0,
         confirmation_seconds=confirmation_seconds,
+        calibration_seconds=0.0,
     )
 
 
